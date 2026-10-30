@@ -1,0 +1,54 @@
+name: Sync fork with upstream
+
+# Pulls Emily2040/seedance-2.0 main into this fork every night,
+# so the seedance-20 Claude skill (which loads this fork) stays current.
+
+on:
+  schedule:
+    - cron: "17 3 * * *" # every day at 03:17 UTC
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    if: github.repository == 'iznogoudcr/seedance-2.0'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Merge upstream main
+        id: merge
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set +e
+          out=$(gh api -X POST "repos/${GITHUB_REPOSITORY}/merge-upstream" -f branch=main 2>&1)
+          code=$?
+          echo "$out"
+          echo "$out" > result.txt
+          exit $code
+
+      - name: Open an issue if the sync failed
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          title="Upstream sync failed"
+          existing=$(gh issue list -R "$GITHUB_REPOSITORY" --state open --search "in:title \"$title\"" --json number --jq '.[0].number')
+          body="The nightly sync with Emily2040/seedance-2.0 failed on $(date -u +%F).
+
+          Most likely cause: upstream changed a file under .github/workflows (the default token is not allowed to update workflow files) or there is a merge conflict.
+
+          Fix: open the repo on GitHub and click **Sync fork**, or merge upstream locally.
+
+          Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" -R "$GITHUB_REPOSITORY" --body "$body"
+          else
+            gh issue create -R "$GITHUB_REPOSITORY" --title "$title" --body "$body"
+          fi
